@@ -1,3 +1,24 @@
+// Layout of Contract:
+// version
+// imports
+// errors
+// interfaces, libraries, contracts
+// Type declarations (Structs, Enums)
+// State variables (Constants, Variables, Mappings, Arrays)
+// Events
+// Modifiers
+// Functions
+
+// Layout of Functions:
+// constructor
+// receive function (if exists)
+// fallback function (if exists)
+// external
+// public
+// internal
+// private
+// view & pure functions
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -8,13 +29,10 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract Staking is ReentrancyGuard, Ownable, Pausable {
-    IERC20 public stakingToken;
-    IERC20 public rewardToken;
+    /*//////////////////////////////////////////////////////////////
+                           TYPE DECLARATIONS
+    //////////////////////////////////////////////////////////////*/
 
-    // Precision for calculations (1e18)
-    uint256 private constant PRECISION = 1e18;
-
-    // Enhanced stake struct with more features
     struct Stake {
         uint128 amount; // Amount staked
         uint64 timestamp; // Time of stake
@@ -23,23 +41,30 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
         uint16 rewardTier; // Reward multiplier tier
     }
 
-    // Stake info by user and stake ID
-    mapping(address => mapping(uint256 => Stake)) public stakes;
-    mapping(address => uint256) public stakeCount;
+    /*//////////////////////////////////////////////////////////////
+                            STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
 
-    // Configurable parameters
-    uint256 public rewardRate;
-    uint256 public minimumStake = 200e18; // Minimum stake
-    uint256 public defaultLockPeriod;
+    IERC20 private immutable stakingToken;
+    IERC20 private immutable rewardToken;
+
+    uint256 private immutable rewardRate;
+    uint256 private immutable minimumStake; // Minimum stake
+    uint256 private immutable defaultLockPeriod;
+    uint256 private immutable emergencyWithdrawalFee; // 10%
+
+    uint256 private constant PRECISION = 1e18;
     uint256 public totalStaked;
 
+    // Stake info by user and stake ID
+    mapping(address user => mapping(uint256 userId => Stake)) public stakes;
+    mapping(address user => uint256) public stakeCount;
     // Reward tiers
-    mapping(uint16 => uint256) public rewardMultipliers;
+    mapping(uint16 => uint256) private rewardMultipliers;
 
-    // Emergency withdrawal fee
-    uint256 public emergencyWithdrawalFee = 1e17; // 10%
-
-    // Events
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
     event Staked(
         address indexed user,
         uint256 indexed stakeId,
@@ -64,22 +89,34 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
         uint256 fee
     );
 
+    /*//////////////////////////////////////////////////////////////
+                               FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
     constructor(
         address _stakingToken,
         address _rewardToken,
         uint256 _rewardRate,
-        uint256 _defaultLockPeriod
+        uint256 _defaultLockPeriod,
+        uint256 _minimumStake,
+        uint256 _emergencyWithdrawalFee
     ) Ownable(msg.sender) {
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
         rewardRate = _rewardRate;
         defaultLockPeriod = _defaultLockPeriod;
+        minimumStake = _minimumStake;
+        emergencyWithdrawalFee = _emergencyWithdrawalFee;
 
         // Set up default reward tiers using precision
         rewardMultipliers[0] = PRECISION; // 1x for basic tier
         rewardMultipliers[1] = (PRECISION * 125) / 100; // 1.25x for silver tier
         rewardMultipliers[2] = (PRECISION * 150) / 100; // 1.5x for gold tier
     }
+
+    /*//////////////////////////////////////////////////////////////
+                           EXTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     // Stake tokens with optional custom lock period
     function stake(
@@ -114,55 +151,6 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
         totalStaked += _amount;
 
         emit Staked(msg.sender, stakeId, _amount, lockPeriod);
-    }
-
-    // Calculate reward tier based on amount and lock period
-    function calculateRewardTier(
-        uint256 _amount,
-        uint256 _lockPeriod
-    ) public pure returns (uint16) {
-        if (_amount >= 1000e18 && _lockPeriod >= 30 days) return 2; // Gold
-        if (_amount >= 500e18 && _lockPeriod >= 14 days) return 1; // Silver
-        return 0; // Basic
-    }
-
-    // Calculate pending rewards for a specific stake with proper precision
-    function calculateRewards(
-        address _user,
-        uint256 _stakeId
-    ) public view returns (uint256) {
-        Stake memory userStake = stakes[_user][_stakeId];
-        if (userStake.amount == 0) return 0;
-
-        uint256 timeStaked = block.timestamp - userStake.lastClaim;
-
-        // First multiply by large factors to maintain precision
-        // Calculate base reward with precision
-        uint256 baseReward = (userStake.amount * rewardRate * timeStaked) /
-            (1 days * PRECISION); // rewardRate is now stored as `5e16` (5%) // Ensure we divide PRECISION properly
-
-        // Apply tier multiplier (already stored as PRECISION-based value)
-        uint256 finalReward = (baseReward *
-            rewardMultipliers[userStake.rewardTier]) / PRECISION;
-
-        return finalReward;
-    }
-
-    // Claim rewards for a specific stake
-    function claimRewards(uint256 _stakeId) public nonReentrant whenNotPaused {
-        uint256 rewards = calculateRewards(msg.sender, _stakeId);
-        require(rewards > 0, "No rewards to claim");
-
-        // Update last claim time
-        stakes[msg.sender][_stakeId].lastClaim = uint64(block.timestamp);
-
-        // Transfer rewards
-        require(
-            rewardToken.transfer(msg.sender, rewards),
-            "Reward transfer failed"
-        );
-
-        emit RewardClaimed(msg.sender, _stakeId, rewards);
     }
 
     // Withdraw staked tokens
@@ -223,10 +211,10 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
     }
 
     // Admin functions
-    function setRewardRate(uint256 _newRate) external onlyOwner {
-        rewardRate = _newRate;
-        emit RewardRateUpdated(_newRate);
-    }
+    // function setRewardRate(uint256 _newRate) external onlyOwner {
+    //     rewardRate = _newRate;
+    //     emit RewardRateUpdated(_newRate);
+    // }
 
     function setRewardMultiplier(
         uint16 _tier,
@@ -235,10 +223,10 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
         rewardMultipliers[_tier] = _multiplier;
     }
 
-    function setEmergencyWithdrawalFee(uint256 _newFee) external onlyOwner {
-        require(_newFee <= 2000, "Fee too high"); // Max 20%
-        emergencyWithdrawalFee = _newFee;
-    }
+    // function setEmergencyWithdrawalFee(uint256 _newFee) external onlyOwner {
+    //     require(_newFee <= 2000, "Fee too high"); // Max 20%
+    //     emergencyWithdrawalFee = _newFee;
+    // }
 
     function pause() external onlyOwner {
         _pause();
@@ -257,5 +245,98 @@ contract Staking is ReentrancyGuard, Ownable, Pausable {
         IERC20 token = IERC20(_token);
         uint256 balance = token.balanceOf(address(this));
         require(token.transfer(owner(), balance), "Transfer failed");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PUBLIC FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    // Calculate reward tier based on amount and lock period
+    function calculateRewardTier(
+        uint256 _amount,
+        uint256 _lockPeriod
+    ) public pure returns (uint16) {
+        if (_amount >= 1000e18 && _lockPeriod >= 30 days) return 2; // Gold
+        if (_amount >= 500e18 && _lockPeriod >= 14 days) return 1; // Silver
+        return 0; // Basic
+    }
+
+    // Calculate pending rewards for a specific stake with proper precision
+    function calculateRewards(
+        address _user,
+        uint256 _stakeId
+    ) public view returns (uint256) {
+        Stake memory userStake = stakes[_user][_stakeId];
+        if (userStake.amount == 0) return 0;
+
+        uint256 timeStaked = block.timestamp - userStake.lastClaim;
+
+        // First multiply by large factors to maintain precision
+        // Calculate base reward with precision
+        uint256 baseReward = (userStake.amount * rewardRate * timeStaked) /
+            (1 days * PRECISION); // rewardRate is now stored as `5e16` (5%) // Ensure we divide PRECISION properly
+
+        // Apply tier multiplier (already stored as PRECISION-based value)
+        uint256 finalReward = (baseReward *
+            rewardMultipliers[userStake.rewardTier]) / PRECISION;
+
+        return finalReward;
+    }
+
+    // Claim rewards for a specific stake
+    function claimRewards(uint256 _stakeId) public nonReentrant whenNotPaused {
+        uint256 rewards = calculateRewards(msg.sender, _stakeId);
+        require(rewards > 0, "No rewards to claim");
+
+        // Update last claim time
+        stakes[msg.sender][_stakeId].lastClaim = uint64(block.timestamp);
+
+        // Transfer rewards
+        require(
+            rewardToken.transfer(msg.sender, rewards),
+            "Reward transfer failed"
+        );
+
+        emit RewardClaimed(msg.sender, _stakeId, rewards);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            GETTER FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    function getStakingToken() external view returns (address) {
+        return address(stakingToken);
+    }
+
+    function getRewardToken() external view returns (address) {
+        return address(rewardToken);
+    }
+
+    function getRewardRate() external view returns (uint256) {
+        return rewardRate;
+    }
+
+    function getMinimumStake() external view returns (uint256) {
+        return minimumStake;
+    }
+
+    function getDefaultLockPeriod() external view returns (uint256) {
+        return defaultLockPeriod;
+    }
+
+    function getEmergencyWithdrawalFee() external view returns (uint256) {
+        return emergencyWithdrawalFee;
+    }
+
+    function getPrecision() external pure returns (uint256) {
+        return PRECISION;
+    }
+
+    function getTotalStaked() external view returns (uint256) {
+        return totalStaked;
+    }
+
+    function getRewardMultiplier(uint16 _tier) external view returns (uint256) {
+        return rewardMultipliers[_tier];
     }
 }
