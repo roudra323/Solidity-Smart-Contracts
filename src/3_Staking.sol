@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
+contract Staking is ReentrancyGuard, Ownable, Pausable {
     IERC20 public stakingToken;
     IERC20 public rewardToken;
 
@@ -40,15 +40,36 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
     uint256 public emergencyWithdrawalFee = 1e17; // 10%
 
     // Events
-    event Staked(address indexed user, uint256 indexed stakeId, uint256 amount, uint256 lockPeriod);
-    event Withdrawn(address indexed user, uint256 indexed stakeId, uint256 amount);
-    event RewardClaimed(address indexed user, uint256 indexed stakeId, uint256 amount);
+    event Staked(
+        address indexed user,
+        uint256 indexed stakeId,
+        uint256 amount,
+        uint256 lockPeriod
+    );
+    event Withdrawn(
+        address indexed user,
+        uint256 indexed stakeId,
+        uint256 amount
+    );
+    event RewardClaimed(
+        address indexed user,
+        uint256 indexed stakeId,
+        uint256 amount
+    );
     event RewardRateUpdated(uint256 newRate);
-    event EmergencyWithdraw(address indexed user, uint256 indexed stakeId, uint256 amount, uint256 fee);
+    event EmergencyWithdraw(
+        address indexed user,
+        uint256 indexed stakeId,
+        uint256 amount,
+        uint256 fee
+    );
 
-    constructor(address _stakingToken, address _rewardToken, uint256 _rewardRate, uint256 _defaultLockPeriod)
-        Ownable(msg.sender)
-    {
+    constructor(
+        address _stakingToken,
+        address _rewardToken,
+        uint256 _rewardRate,
+        uint256 _defaultLockPeriod
+    ) Ownable(msg.sender) {
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
         rewardRate = _rewardRate;
@@ -61,7 +82,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
     }
 
     // Stake tokens with optional custom lock period
-    function stake(uint256 _amount, uint256 _lockPeriod) external nonReentrant whenNotPaused {
+    function stake(
+        uint256 _amount,
+        uint256 _lockPeriod
+    ) external nonReentrant whenNotPaused {
         require(_amount >= minimumStake, "Below minimum stake");
 
         uint256 lockPeriod = _lockPeriod == 0 ? defaultLockPeriod : _lockPeriod;
@@ -72,7 +96,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
         uint16 tier = calculateRewardTier(_amount, lockPeriod);
 
         // Transfer tokens to contract
-        require(stakingToken.transferFrom(msg.sender, address(this), _amount), "Transfer failed");
+        require(
+            stakingToken.transferFrom(msg.sender, address(this), _amount),
+            "Transfer failed"
+        );
 
         // Create new stake
         uint256 stakeId = stakeCount[msg.sender];
@@ -90,14 +117,20 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
     }
 
     // Calculate reward tier based on amount and lock period
-    function calculateRewardTier(uint256 _amount, uint256 _lockPeriod) public pure returns (uint16) {
+    function calculateRewardTier(
+        uint256 _amount,
+        uint256 _lockPeriod
+    ) public pure returns (uint16) {
         if (_amount >= 1000e18 && _lockPeriod >= 30 days) return 2; // Gold
         if (_amount >= 500e18 && _lockPeriod >= 14 days) return 1; // Silver
         return 0; // Basic
     }
 
     // Calculate pending rewards for a specific stake with proper precision
-    function calculateRewards(address _user, uint256 _stakeId) public view returns (uint256) {
+    function calculateRewards(
+        address _user,
+        uint256 _stakeId
+    ) public view returns (uint256) {
         Stake memory userStake = stakes[_user][_stakeId];
         if (userStake.amount == 0) return 0;
 
@@ -105,10 +138,12 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
 
         // First multiply by large factors to maintain precision
         // Calculate base reward with precision
-        uint256 baseReward = (userStake.amount * rewardRate * timeStaked) / (1 days * PRECISION); // rewardRate is now stored as `5e16` (5%) // Ensure we divide PRECISION properly
+        uint256 baseReward = (userStake.amount * rewardRate * timeStaked) /
+            (1 days * PRECISION); // rewardRate is now stored as `5e16` (5%) // Ensure we divide PRECISION properly
 
         // Apply tier multiplier (already stored as PRECISION-based value)
-        uint256 finalReward = (baseReward * rewardMultipliers[userStake.rewardTier]) / PRECISION;
+        uint256 finalReward = (baseReward *
+            rewardMultipliers[userStake.rewardTier]) / PRECISION;
 
         return finalReward;
     }
@@ -122,7 +157,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
         stakes[msg.sender][_stakeId].lastClaim = uint64(block.timestamp);
 
         // Transfer rewards
-        require(rewardToken.transfer(msg.sender, rewards), "Reward transfer failed");
+        require(
+            rewardToken.transfer(msg.sender, rewards),
+            "Reward transfer failed"
+        );
 
         emit RewardClaimed(msg.sender, _stakeId, rewards);
     }
@@ -133,7 +171,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
     function withdraw(uint256 _stakeId) external nonReentrant whenNotPaused {
         Stake storage userStake = stakes[msg.sender][_stakeId];
         require(userStake.amount > 0, "No stake found");
-        require(block.timestamp >= userStake.timestamp + userStake.lockPeriod, "Lock period not ended");
+        require(
+            block.timestamp >= userStake.timestamp + userStake.lockPeriod,
+            "Lock period not ended"
+        );
 
         uint256 amount = userStake.amount;
 
@@ -173,7 +214,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
         delete stakes[msg.sender][_stakeId];
 
         // Transfer tokens back to user minus fee
-        require(stakingToken.transfer(msg.sender, withdrawAmount), "Transfer failed");
+        require(
+            stakingToken.transfer(msg.sender, withdrawAmount),
+            "Transfer failed"
+        );
 
         emit EmergencyWithdraw(msg.sender, _stakeId, withdrawAmount, fee);
     }
@@ -184,7 +228,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
         emit RewardRateUpdated(_newRate);
     }
 
-    function setRewardMultiplier(uint16 _tier, uint256 _multiplier) external onlyOwner {
+    function setRewardMultiplier(
+        uint16 _tier,
+        uint256 _multiplier
+    ) external onlyOwner {
         rewardMultipliers[_tier] = _multiplier;
     }
 
@@ -203,7 +250,10 @@ contract EnhancedStaking is ReentrancyGuard, Ownable, Pausable {
 
     // Emergency function to recover wrong tokens
     function recoverToken(address _token) external onlyOwner {
-        require(_token != address(stakingToken), "Cannot recover staking token");
+        require(
+            _token != address(stakingToken),
+            "Cannot recover staking token"
+        );
         IERC20 token = IERC20(_token);
         uint256 balance = token.balanceOf(address(this));
         require(token.transfer(owner(), balance), "Transfer failed");
